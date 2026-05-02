@@ -2,20 +2,19 @@
 
 Semiconductor process analysis on the [SECOM dataset](https://archive.ics.uci.edu/dataset/179/secom)
 (UCI ML Repository) — identifying yield-limiting sensor parameters and predicting
-pass/fail outcomes across 1,567 wafer runs.
+pass/fail outcomes across 1,567 wafer runs using Python, Pandas, and Scikit-learn.
 
 ---
 
 ## Problem
 
-In semiconductor manufacturing, hundreds of sensors monitor each wafer as it moves
-through fabrication. At the end of the line, a wafer either passes or fails electrical
-testing. The goal: **which sensor readings predict failure early**, before the wafer
-wastes further processing steps?
+A semiconductor fab records 590 sensor readings per wafer — temperature, pressure,
+gas flow, spin speed, and more. At the end of fabrication, each wafer either passes
+or fails electrical testing. The goal: **which sensors predict failure early?**
 
-The core challenge is severe class imbalance — only **6.6% of wafers pass** (104 out
-of 1,567). A naive model that always predicts "fail" gets 93% accuracy while being
-completely useless. This project handles that correctly.
+The core challenge is severe class imbalance — only **6.6% of wafers pass**
+(104 out of 1,567). A naive model predicting all-fail scores 93% accuracy while
+catching zero good wafers. This project handles that correctly.
 
 ---
 
@@ -25,16 +24,17 @@ completely useless. This project handles that correctly.
 |---|---|
 | Source | UCI ML Repository — SECOM |
 | Wafer runs | 1,567 |
-| Sensor parameters | 590 |
+| Raw sensor parameters | 590 |
+| Features after cleaning | 442 |
 | Pass rate | 6.6% (104 pass / 1,463 fail) |
 | Missing values | 4.5% |
 
 ---
 
-## Project Structure
+## Repository Structure
 
 ```
-├── secom_analysis.ipynb   # Full Colab notebook
+├── secom_analysis.ipynb        # Full Colab notebook — run top to bottom
 ├── correlation_analysis.png
 ├── wafer_maps.png
 ├── yield_trends.png
@@ -50,38 +50,63 @@ completely useless. This project handles that correctly.
 ### 1. Data Cleaning
 - Dropped columns with >40% missing values: 590 → 558 features
 - Imputed remaining NaNs with column median
-- Removed zero-variance columns: 558 → 442 features
+- Removed zero-variance columns: 558 → 442 usable features
 
 ### 2. Correlation Analysis
-Computed point-biserial correlation between each sensor and the pass/fail label.
-Top sensor (column 59) showed correlation of 0.156 with p-value 5.3×10⁻¹⁰.
-Selected top 50 features for modelling.
+Computed point-biserial correlation between each sensor and pass/fail label.
+Selected top 50 features by absolute correlation for modelling.
+
+![Correlation Analysis](correlation_analysis.png)
+
+Top finding: Sensor 103 and Sensor 59 showed the strongest association with yield
+outcome (importance ~0.063 each in the final model).
 
 ### 3. Synthetic Wafer Map Classification
-Generated 300 synthetic wafer maps with three defect patterns and built a
-rule-based spatial classifier using nearest-neighbour distance analysis:
+Generated 300 synthetic wafer maps to demonstrate understanding of spatial defect
+patterns. Built a rule-based classifier using nearest-neighbour distance analysis
+to distinguish three defect types:
 
-| Pattern | Precision | Recall | F1 |
+![Wafer Maps](wafer_maps.png)
+
+| Pattern | Precision | Recall | F1-score |
 |---|---|---|---|
 | Edge | 1.00 | 1.00 | 1.00 |
 | Cluster | 1.00 | 0.41 | 0.58 |
 | Random | 0.68 | 1.00 | 0.81 |
-| **Overall** | | **81.7%** | |
+| **Overall accuracy** | | | **81.7%** |
 
-### 4. ML Modelling
-Addressed class imbalance with two techniques:
-- **SMOTE** — synthesised minority (Pass) examples: 83 → 1,170 balanced training samples
-- **Threshold tuning** — lowered decision threshold from 0.50 to 0.28 to optimise Pass recall
+Edge defects show the highest defect rate (~45%), followed by cluster (~12%)
+and random (~8%):
 
-#### Model comparison (test set)
+![Yield Trends](yield_trends.png)
 
-| Model | AUC | Pass Recall | Pass F1 |
-|---|---|---|---|
-| **Random Forest** | **0.762** | **0.524** | **0.272** |
-| Logistic Regression | 0.710 | 0.429 | 0.286 |
-| XGBoost | 0.691 | 0.381 | 0.216 |
+### 4. ML Modelling — Handling Class Imbalance
 
-#### Cross-validation (Random Forest, 5-fold stratified)
+Two techniques applied to address the 6.6% pass rate:
+
+**SMOTE** (Synthetic Minority Oversampling) — synthesised new Pass examples
+by interpolating between real ones, balancing training data from
+83 → 1,170 Pass samples.
+
+**Threshold tuning** — lowered decision threshold from default 0.50 → 0.28,
+since the model never reaches 50% confidence on a class it sees so rarely.
+
+---
+
+## Results
+
+### Random Forest — Primary Model
+
+![Feature Importance and Confusion Matrix](random_forest_results.png)
+
+| Metric | Value |
+|---|---|
+| Test Accuracy | 82.5% |
+| ROC-AUC | 0.778 |
+| Pass Recall | 62% (13/21 passing wafers caught) |
+| Optimal threshold | 0.28 (default 0.50) |
+
+5-fold stratified cross-validation confirmed generalisation:
 
 | Fold | AUC |
 |---|---|
@@ -92,43 +117,55 @@ Addressed class imbalance with two techniques:
 | 5 | 0.706 |
 | **Mean** | **0.741 ± 0.033** |
 
+### ROC Curve
+
+![ROC Curve](roc_curve.png)
+
+### Model Comparison (Random Forest vs XGBoost vs Logistic Regression)
+
+All three models trained on SMOTE-balanced data with tuned thresholds:
+
+![Model Comparison](model_comparison.png)
+
+| Model | AUC | Pass Recall | Pass F1 |
+|---|---|---|---|
+| **Random Forest** | **0.762** | **0.524** | 0.272 |
+| Logistic Regression | 0.710 | 0.429 | **0.286** |
+| XGBoost | 0.691 | 0.381 | 0.216 |
+
+Random Forest wins on AUC and Pass Recall — the two metrics that matter most
+in a manufacturing context.
+
 ---
 
-## Key Results
+## Why accuracy is the wrong metric here
 
-- Random Forest achieves **AUC 0.778** on the held-out test set
-- Catches **52.4% of passing wafers** (Pass Recall) — the operationally critical metric,
-  since missing a good wafer means scrapping a usable product
-- Cross-validation confirms the model generalises (AUC 0.741 ± 0.033) and is not
-  overfitting a single lucky split
-- Accuracy alone (93%) is **misleading** on this dataset — a model predicting all-fail
-  scores the same. AUC and Pass Recall are the right metrics here.
-
----
-
-## Why AUC matters more than accuracy here
-
-> A model that always predicts "Fail" gets **93.4% accuracy**.
-> It catches **0% of passing wafers**.
-> That is worse than useless in a fab setting.
+A model that predicts "Fail" for every wafer scores **93.4% accuracy** while
+catching **zero passing wafers** — useless in production.
 
 AUC of 0.778 means: given one random passing wafer and one random failing wafer,
-the model correctly ranks the passing wafer higher **77.8% of the time**.
+the model correctly ranks the passing wafer as more likely to pass **77.8% of
+the time**. Pass Recall of 62% means it saves 13 out of every 21 good wafers
+from being incorrectly scrapped.
 
 ---
 
 ## Tech Stack
 
-- Python 3.12
-- pandas, numpy, scipy
-- scikit-learn (Random Forest, Logistic Regression, SMOTE via imbalanced-learn)
-- XGBoost
-- matplotlib, seaborn
+| Library | Purpose |
+|---|---|
+| pandas, numpy | Data loading, cleaning, feature engineering |
+| scipy | Point-biserial correlation analysis |
+| scikit-learn | Random Forest, Logistic Regression, cross-validation, SMOTE |
+| xgboost | Gradient boosted trees comparison |
+| imbalanced-learn | SMOTE oversampling |
+| matplotlib, seaborn | All visualisations |
 
 ---
 
 ## How to Run
 
-1. Open `secom_analysis.ipynb` in Google Colab
-2. Run all cells top to bottom
-3. Dataset downloads automatically from UCI — no manual setup needed
+1. Open `secom_analysis.ipynb` in [Google Colab](https://colab.research.google.com)
+2. Run all cells top to bottom — no setup needed
+3. Dataset downloads automatically from UCI ML Repository
+4. All 6 output charts save automatically to the Colab file system
